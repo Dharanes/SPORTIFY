@@ -1,0 +1,250 @@
+package com.customer.controller;
+
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
+import com.customer.dto.BookingDto;
+import com.customer.dto.CustomerDto;
+import com.customer.dto.CustomerLoginDto;
+import com.customer.dto.CustomerSendDto;
+import com.customer.dto.PasswordUpdateRequest;
+import com.customer.dto.ResponseDto;
+import com.customer.dto.RoleDto;
+import com.customer.dto.TurfBookingDto;
+import com.customer.dto.TurfDto;
+import com.customer.exception.CredentialsInvalidException;
+import com.customer.exception.CustomerAlreadyExistsException;
+import com.customer.exception.CustomerNotFoundException;
+import com.customer.exception.InvalidTokenException;
+import com.customer.exception.NoCustomerExistsException;
+import com.customer.exception.PasswordNotCorrectException;
+import com.customer.feign.BookingFeign;
+import com.customer.feign.TurfFeing;
+import com.customer.model.Booking;
+import com.customer.model.Customer;
+import com.customer.repository.CustomerRepository;
+import com.customer.service.CustomerService;
+import com.customer.service.JwtService;
+
+import io.jsonwebtoken.Claims;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+
+@RestController
+@RequiredArgsConstructor
+public class CustomerController {
+	private static final Logger logger = LoggerFactory.getLogger(CustomerController.class);
+
+	private final CustomerService custService;
+
+	private final CustomerRepository userRepo;
+
+	private final AuthenticationManager authenticationManager;
+
+	private final BookingFeign bookingClient;
+
+	private final TurfFeing turfClient;
+
+	@PostMapping("/public/register")
+	public ResponseEntity<String> registerCust(@Valid @RequestBody Customer cust)
+			throws CustomerAlreadyExistsException {
+		custService.registerCustomer(cust);
+		return ResponseEntity.status(HttpStatus.CREATED).body("Registration Successfull");
+	}
+
+	@PostMapping("/public/login") // handle exceptio
+	public ResponseDto loginCust(@RequestBody CustomerLoginDto authRequest)
+			throws CustomerNotFoundException, CredentialsInvalidException {
+
+		if (authRequest.getEmail() == null || authRequest.getEmail().isEmpty()) {
+			throw new CredentialsInvalidException("Email is required");
+		}
+		if (authRequest.getPassword() == null || authRequest.getPassword().isEmpty()) {
+			throw new CredentialsInvalidException("Password is required");
+		}
+
+		logger.info("Attempting to log in user: {} {}", authRequest.getEmail(), authRequest.getPassword());
+		try {
+			logger.error("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+			Authentication authenticate = authenticationManager.authenticate(
+					new UsernamePasswordAuthenticationToken(authRequest.getEmail(), authRequest.getPassword()));
+			logger.error("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx {}",authenticate);
+			if (authenticate.isAuthenticated()) {
+				Customer user = userRepo.findByEmail(authRequest.getEmail()).orElseThrow(
+						() -> new CustomerNotFoundException("User not found with username: " + authRequest.getEmail()));
+				logger.info("Attempting to log in user: {}", user);
+				String token = custService.generateToken(user.getId() + "", user.getRole());
+				ResponseDto resDto = new ResponseDto();
+				resDto.setToken(token);
+				resDto.setRole(user.getRole());
+				logger.info("User logged in successfully: {}", authRequest.getEmail());
+				return resDto;
+			} else {
+				throw new CredentialsInvalidException("Invalid login credentials");
+			}
+		} catch (Exception e) {
+			logger.error("Login failed: {}", e.getMessage());
+			throw new CredentialsInvalidException("Login failed. Please check your credentials.");
+		}
+	}
+
+	@GetMapping("/validate")
+	public ResponseEntity<String> validateToken(@RequestParam String token) {
+		logger.info("Token validation attempt");
+		custService.validateToken(token);
+		return new ResponseEntity<>("Token is valid", HttpStatus.OK);
+	}
+
+	@GetMapping("/admin/fetchAllUsers")
+	public ResponseEntity<List<CustomerDto>> getCustomers() throws NoCustomerExistsException {
+		return ResponseEntity.status(200).body(custService.fetchCustomers());
+	}
+
+	@GetMapping("/getUserName")
+	public Customer getUserName(@RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader) {
+		String id = null;
+		if (authHeader != null && authHeader.startsWith("Bearer ")) {
+			String token = authHeader.substring(7);
+			Claims claim = JwtService.extractClaims(token);
+			id = claim.getSubject();
+		}
+		return custService.getCustomerById(Long.valueOf(id));
+	}
+
+	@PutMapping("/updateImage")
+	public String updateImage(@RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader,
+			@RequestParam("imageUrl") MultipartFile imageUrl) {
+		String id = null;
+		if (authHeader != null && authHeader.startsWith("Bearer ")) {
+			String token = authHeader.substring(7);
+			Claims claim = JwtService.extractClaims(token);
+			id = claim.getSubject();
+		}
+		Customer cust = null;
+		try {
+			cust = custService.getCustomerById(Long.valueOf(id));
+			cust.setImageUrl(Base64.getEncoder().encodeToString(imageUrl.getBytes()));
+			custService.updateCustomer(cust);
+
+		} catch (Exception ex) {
+
+		}
+
+		return cust.getImageUrl();
+	}
+
+	@GetMapping("/admin/fetchUserByEmail/{email}")
+	public CustomerSendDto getCustomerByEmail(@PathVariable String email) throws CustomerNotFoundException {
+		return custService.getCustomerByEmail(email);
+	}
+
+	@PutMapping("/changePassword")
+	public ResponseEntity<String> updatePassword(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorizationHeader,
+			@RequestBody PasswordUpdateRequest passReq) throws PasswordNotCorrectException, InvalidTokenException {
+
+		custService.updatePassword(authorizationHeader, passReq);
+
+		SecurityContextHolder.clearContext();
+
+		return ResponseEntity.status(HttpStatus.CREATED).body("Password updated successfully");
+	}
+
+	@DeleteMapping("/deactivate-account")
+	public ResponseEntity<String> deleteAccount(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorizationHeader)
+			throws InvalidTokenException {
+		custService.deleteAccount(authorizationHeader);
+
+		return ResponseEntity.status(HttpStatus.OK).body("Account deleted");
+	}
+
+// user profile for booking detail and cancel option
+	@GetMapping("/showProfile")
+	public ResponseEntity<?> showProfile(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorizationHeader,
+			HttpServletRequest request) {
+
+		RoleDto dto = custService.extractUsernameFromToken(authorizationHeader);// handle null
+
+		Long id = Long.valueOf(dto.getId());
+		if (dto.getRole().equals("ROLE_USER")) {
+			List<Booking> bookings = bookingClient.getBookingByUser(id);
+			if (bookings.isEmpty()) {
+				return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No Booking Found");
+			}
+
+			return ResponseEntity.status(200).body(bookings);
+		}
+		List<TurfDto> turfs = turfClient.getAllTurfsByOwnerId(id);
+		if (turfs.isEmpty()) {
+			return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No Turf Found");
+		}
+		// if this is empty handle that
+
+		return ResponseEntity.status(200).body(turfs);
+	}
+
+	@GetMapping("/showProfile/bookings/{turfName}")
+	public TurfBookingDto showBookingsByTurfName(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorizationHeader,
+			@PathVariable String turfName) {
+		RoleDto dto = custService.extractUsernameFromToken(authorizationHeader);
+		TurfBookingDto turfBookingDto = null;
+		Long id = Long.valueOf(dto.getId());
+
+		if (dto.getRole().equals("ROLE_OWNER")) {
+			List<TurfDto> turfs = turfClient.getAllTurfsByOwnerId(id);
+			Map<String, Map<String, List<BookingDto>>> bookings = turfClient.getBookings(authorizationHeader);
+			TurfDto turfDto = turfs.stream().filter(turf -> turf.getTurfName().equals(turfName)).findFirst().get();
+			turfBookingDto = new TurfBookingDto(turfName, bookings.get(turfDto.getTurfName()));
+		}
+		return turfBookingDto;
+	}
+
+	@GetMapping("/admin/numberofusers")
+	public Long numberOfUsers() {
+		return custService.numberOfUsers();
+	}
+
+	@PutMapping("/updateProfile")
+	public String updateProfile(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorizationHeader,
+			@RequestBody CustomerDto updatedCustomerDto) {
+		return custService.updateProfile(authorizationHeader, updatedCustomerDto);
+	}
+
+	@PutMapping("/showProfile/cancelATurf/{id}")
+	public ResponseEntity<?> cancelATurf(@PathVariable Long id) {
+		bookingClient.cancel(id);
+		return null;
+	}
+
+	@GetMapping("/byId/{id}")
+	public Customer getById(@PathVariable Long id) {
+		return custService.getCustomerById(id);
+	}
+
+	@GetMapping("/getImage")
+	public String getImage(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorizationHeader) {
+		return custService.getImage(authorizationHeader);
+	}
+
+}

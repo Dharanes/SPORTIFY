@@ -1,0 +1,55 @@
+package com.customer.service;
+
+import java.util.List;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.server.ServerWebExchange;
+
+import com.customer.dto.CustomerDto;
+import com.customer.dto.CustomerLoginDto;
+import com.customer.dto.CustomerSendDto;
+import com.customer.dto.PasswordUpdateRequest;
+import com.customer.dto.RoleDto;
+import com.customer.exception.CredentialsInvalidException;
+import com.customer.exception.CustomerAlreadyExistsException;
+import com.customer.exception.CustomerNotFoundException;
+import com.customer.exception.InvalidTokenException;
+import com.customer.exception.NoCustomerExistsException;
+import com.customer.exception.PasswordNotCorrectException;
+import com.customer.model.Booking;
+import com.customer.model.Customer;
+
+public interface CustomerService {
+	
+	String registerCustomer(Customer cust) throws CustomerAlreadyExistsException;
+	
+	
+	ResponseEntity<String> loginCust(CustomerLoginDto user) throws CustomerNotFoundException, CredentialsInvalidException;
+	
+	List<CustomerDto> fetchCustomers() throws NoCustomerExistsException;
+
+	CustomerSendDto getCustomerByEmail(String email) throws CustomerNotFoundException;
+
+	void updatePassword(String authorizationHeader, PasswordUpdateRequest passReq) throws PasswordNotCorrectException,InvalidTokenException;
+
+	void deleteAccount(String email) throws InvalidTokenException;
+
+	String generateToken(String email, String role);
+
+	void validateToken(String token);
+	
+	RoleDto extractUsernameFromToken(String token);
+
+	List<Booking> showProfile(String extractedEmail);
+
+	Customer getCustomerById(Long id);
+
+	void updateCustomer(Customer cust);
+
+	Long numberOfUsers();
+
+	String updateProfile(String authorizationHeader, CustomerDto updatedCustomerDto);
+
+	String getImage(String authorizationHeader);
+
+}

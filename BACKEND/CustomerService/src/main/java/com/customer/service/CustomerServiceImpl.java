@@ -1,0 +1,277 @@
+package com.customer.service;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
+import com.customer.dto.CustomerDto;
+import com.customer.dto.CustomerLoginDto;
+import com.customer.dto.CustomerSendDto;
+import com.customer.dto.PasswordUpdateRequest;
+import com.customer.dto.RoleDto;
+import com.customer.exception.CredentialsInvalidException;
+import com.customer.exception.CustomerAlreadyExistsException;
+import com.customer.exception.CustomerNotFoundException;
+import com.customer.exception.InvalidRequestException;
+import com.customer.exception.InvalidTokenException;
+import com.customer.exception.NoCustomerExistsException;
+import com.customer.exception.PasswordNotCorrectException;
+import com.customer.feign.BookingFeign;
+import com.customer.model.Booking;
+import com.customer.model.Customer;
+import com.customer.repository.CustomerRepository;
+
+import io.jsonwebtoken.Claims;
+import lombok.RequiredArgsConstructor;
+
+@Service
+@RequiredArgsConstructor
+public class CustomerServiceImpl implements CustomerService {
+	private static final Logger logger = LoggerFactory.getLogger(CustomerServiceImpl.class);
+	private static final String BEARER = "Bearer ";
+
+	private final JwtService jwtService;
+	private final CustomerRepository custRepo;
+	private final PasswordEncoder encoder;
+	private final BookingFeign bookinClient;
+
+	@Override
+	public String registerCustomer(Customer cust) throws CustomerAlreadyExistsException {
+		String email = cust.getEmail();
+		Optional<Customer> custFromDb = custRepo.findByEmail(email);
+		if (email == null) {
+	        throw new NullPointerException("Email cannot be null");
+	    }
+		if (custFromDb.isPresent()) {
+			throw new CustomerAlreadyExistsException("Customer with email id already exists");
+		}
+		cust.setPassword(encoder.encode(cust.getPassword()));
+		custRepo.save(cust);
+		return "Registration successfull";
+	}
+
+	@Override
+	public List<CustomerDto> fetchCustomers() throws NoCustomerExistsException {
+		List<Customer> customers = custRepo.findAll();
+		if (customers.isEmpty()) {
+			throw new NoCustomerExistsException("No Customer Exists");
+		}
+		List<CustomerDto> custs = new ArrayList<>();
+		customers.forEach(cust -> custs.add(new CustomerDto(cust.getUserName(), cust.getPassword(), cust.getEmail(),
+				cust.getContactNumber(), cust.getRole())));
+		return custs;
+	}
+
+	@Override
+	public ResponseEntity<String> loginCust(CustomerLoginDto user)
+			throws CustomerNotFoundException, CredentialsInvalidException {
+		String email = user.getEmail();
+		Optional<Customer> foundCustomer = custRepo.findByEmail(email);
+		if (foundCustomer.isEmpty()) {
+			throw new CustomerNotFoundException("Customer not found");
+		}
+		Customer customer = foundCustomer.get();
+
+		if (!(customer.getEmail().equals(email) && encoder.matches(user.getPassword(), customer.getPassword()))) {
+			throw new CredentialsInvalidException("Invalid Credentials");
+		}
+
+		return ResponseEntity.status(200).body("Login success");
+	}
+
+	@Override
+	public CustomerSendDto getCustomerByEmail(String email) throws CustomerNotFoundException {
+		Optional<Customer> custs = custRepo.findByEmail(email);
+		if (custs.isEmpty()) {
+			throw new CustomerNotFoundException("Customer not found with id: " + email);
+		}
+		Customer cust = custs.get();
+		return new CustomerSendDto(cust.getId(), cust.getUserName(), cust.getEmail(),
+				cust.getContactNumber());
+
+	}
+
+	@Override
+	public void updatePassword(String authorizationHeader, PasswordUpdateRequest passReq)
+			throws PasswordNotCorrectException, InvalidTokenException {
+		String id = null;
+		if (authorizationHeader != null && authorizationHeader.startsWith(BEARER)) {
+			String token = authorizationHeader.substring(7);
+			Claims claim = JwtService.extractClaims(token);
+			id = claim.getSubject();
+		}
+		
+
+		if (id != null) {
+			Optional<Customer> cust = custRepo.findById(Long.valueOf(id));
+			Customer obj = null;
+			if(cust.isPresent())
+			 obj = cust.get();
+
+			if (obj!=null && encoder.matches(passReq.getCurPass(), obj.getPassword())) {
+
+				String newPass = passReq.getNewPass();
+				String confirmPass = passReq.getConfirmPass();
+
+				if (newPass.equals(confirmPass)) {
+					obj.setPassword(encoder.encode(newPass));
+					custRepo.save(obj);
+				} else {
+					logger.error("Password mismatch");
+					throw new PasswordNotCorrectException("New password and confirmed password doesn't match");
+				}
+
+			} else {
+				logger.error("Invalid password");
+				throw new PasswordNotCorrectException("Password doesn't match for user id: " + id);
+			}
+		}else {
+			logger.error("Token expired or invalid");
+			throw new InvalidTokenException("Token is invalid or expired");
+		}
+
+	}
+
+	@Override
+	public void deleteAccount(String authorizationHeader) throws InvalidTokenException {
+		String id = null;
+		if (authorizationHeader != null && authorizationHeader.startsWith(BEARER)) {
+			String token = authorizationHeader.substring(7);
+			Claims claim = JwtService.extractClaims(token);
+			id = claim.getSubject();
+		}
+		if(id!=null) {
+			custRepo.deleteById(Long.valueOf(id));
+		}else {
+			logger.error("Token expired or invalid");
+			throw new InvalidTokenException("Token is invalid or expired");
+		}
+	}
+
+	@Override
+	public String generateToken(String email, String role) {
+		if (email == null || email.trim().isEmpty()) {
+			throw new InvalidRequestException("Username cannot be null or empty");
+		}
+		if (role == null || role.trim().isEmpty()) {
+			throw new InvalidRequestException("Role cannot be null or empty");
+		}
+		return jwtService.generateToken(email, role);
+	}
+
+	@Override
+	public void validateToken(String token) {
+		// Check if the token is null or empty
+		if (token == null || token.trim().isEmpty()) {
+			throw new InvalidRequestException("Token cannot be null or empty");
+		}
+		// Call the JWT service to validate the token
+		try {
+			jwtService.validateToken(token);
+		} catch (InvalidRequestException e) {
+			throw new InvalidRequestException("Invalid token provided: " + e.getMessage());
+		}
+	}
+
+	@Override
+	public RoleDto extractUsernameFromToken(String authorizationHeader) {
+		if (authorizationHeader != null && authorizationHeader.startsWith(BEARER)) {
+			String token = authorizationHeader.substring(7);
+			Claims claim = JwtService.extractClaims(token);
+			return new RoleDto(JwtService.getUsername(claim),JwtService.getRoles(claim));
+		}
+		return null;
+	}
+
+	@Override
+	public List<Booking> showProfile(String extractedEmail) {
+		Long id = 0l;
+		try {
+			id = getCustomerByEmail(extractedEmail).getId();
+		} catch (CustomerNotFoundException e) {
+			e.printStackTrace();
+		}
+		if (id != 0) {
+			return bookinClient.getBookingByUser(id);
+		}
+		return Collections.emptyList();
+
+	}
+
+	@Override
+	public Customer getCustomerById(Long id) {
+		
+		return custRepo.findById(id).orElseThrow(() -> new RuntimeException("Customer not found with id: " + id));
+	}
+
+	@Override
+	public void updateCustomer(Customer cust) {
+		custRepo.save(cust);
+	}
+
+	@Override
+	public Long numberOfUsers() {
+		return (long) custRepo.findAll().size();
+	}
+
+	@Override
+	public String updateProfile(String authorizationHeader, CustomerDto updatedCustomerDto) {
+		if (authorizationHeader == null) {
+	        throw new IllegalArgumentException("Authorization header cannot be null");
+	    }
+	    String id = null;
+	    
+	    if (authorizationHeader != null && authorizationHeader.startsWith(BEARER)) {
+	        String token = authorizationHeader.substring(7);
+	        Claims claim = JwtService.extractClaims(token);
+	        id = claim.getSubject();
+	    }
+
+	    if (updatedCustomerDto == null) {
+	        throw new IllegalArgumentException("Updated customer data cannot be null");
+	    }
+
+	    Customer cust = custRepo.findById(Long.valueOf(id)).orElseThrow(() -> new RuntimeException("Customer not found"));
+
+	    if (updatedCustomerDto.getContactNumber() != null) {
+	        cust.setContactNumber(updatedCustomerDto.getContactNumber());
+	    }
+
+	    if (!(updatedCustomerDto.getPassword() == null || updatedCustomerDto.getPassword().isEmpty())) {
+	        cust.setPassword(encoder.encode(updatedCustomerDto.getPassword()));
+	    }
+
+	    if (updatedCustomerDto.getEmail() != null) {
+	        cust.setEmail(updatedCustomerDto.getEmail());
+	    }
+
+	    if (updatedCustomerDto.getUserName() != null) {
+	        cust.setUserName(updatedCustomerDto.getUserName());
+	    }
+
+	    custRepo.save(cust);
+	    
+	    return "Profile updated successfully";
+	}
+
+	@Override
+	public String getImage(String authorizationHeader) {
+		String id = null;
+
+		if (authorizationHeader != null && authorizationHeader.startsWith(BEARER)) {
+			String token = authorizationHeader.substring(7);
+			Claims claim = JwtService.extractClaims(token);
+			id = claim.getSubject();
+		}
+		Customer cust = custRepo.findById(Long.valueOf(id)).get();
+		return cust.getImageUrl();
+	}
+
+}

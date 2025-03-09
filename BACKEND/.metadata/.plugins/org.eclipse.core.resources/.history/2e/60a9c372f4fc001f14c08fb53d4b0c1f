@@ -1,0 +1,48 @@
+package com.turf.model;
+
+import java.time.LocalDate;
+import java.util.List;
+
+
+import com.fasterxml.jackson.annotation.JsonManagedReference;
+
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Lob;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.OneToOne;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Entity
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+public class Turf {
+	
+	@Id
+	@GeneratedValue(strategy = GenerationType.IDENTITY)
+	Long turfId;
+	String turfName;
+	String location;
+	String ownerId;
+	LocalDate registeredOn;
+	
+	@Lob
+	String imageUrl;
+	
+	@OneToMany(mappedBy = "turf", cascade = CascadeType.ALL,orphanRemoval = true)
+	@JsonManagedReference
+	List<Game> availableGames;
+	
+	 @OneToOne(mappedBy = "turf", cascade = CascadeType.ALL)
+	 private TurfApproval turfApproval;
+	 
+	 @OneToOne(mappedBy = "turf", cascade = CascadeType.ALL)
+	 private Ratings ratings;
+	
+}

@@ -1,0 +1,116 @@
+services:
+  service-registry:
+    image: dharan1408/service-registry:latest
+    ports:
+      - "8761:8761"
+    networks:
+      - backend
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: turf
+    ports:
+      - "5432:5432"
+    networks:
+      - backend
+
+  auth-service:
+    image: dharan1408/auth-service:latest
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/turf
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: root
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka/
+    depends_on:
+      - service-registry
+      - postgres
+    ports:
+      - "8081:8081"
+    networks:
+      - backend
+
+  customer-service:
+    image: dharan1408/customer-service:latest
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/turf
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: root
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka/
+    depends_on:
+      - service-registry
+      - postgres
+    ports:
+      - "8082:8082"
+    networks:
+      - backend
+
+  booking-service:
+    image: dharan1408/booking-service:latest
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/turf
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: root
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka/
+    depends_on:
+      - service-registry
+      - postgres
+    ports:
+      - "8083:8083"
+    networks:
+      - backend
+
+  turf-service:
+    image: dharan1408/turf-service:latest
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/turf
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: root
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka/
+    depends_on:
+      - service-registry
+      - postgres
+    ports:
+      - "8084:8084"
+    networks:
+      - backend
+
+  payment-service:
+    image: dharan1408/payment-service:latest
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/turf
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: root
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka/
+    depends_on:
+      - service-registry
+      - postgres
+    ports:
+      - "8085:8085"
+    networks:
+      - backend
+
+  api-gateway:
+    image: dharan1408/api-gateway:latest
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka/
+    depends_on:
+      - service-registry
+    ports:
+      - "8000:8000"
+    networks:
+      - backend
+
+  frontend:
+    image: dharan1408/frontend:latest
+    ports:
+      - "5173:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - backend
+
+networks:
+  backend:
